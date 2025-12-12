@@ -44,8 +44,8 @@ const uint8_t PIN_BME_PWR =  4;   // Irrelevant if directly connected to 3.3V
 const uint8_t BME_ADDRESS = 0x76; // 0x76 if SDO -> GND; 0x77 if SDO -> VCC
 
 // WIFI
-const char *WIFI_SSID     = "ssid_goes_here";
-const char *WIFI_PASSWORD = "password_goes_here";
+const char *WIFI_SSID     = "ssid";
+const char *WIFI_PASSWORD = "pw";
 const unsigned long WIFI_TIMEOUT = 10000; // ms, WiFi connection timeout.
 
 // HTTP
@@ -78,7 +78,7 @@ const String OWM_ONECALL_VERSION = "3.0";
 
 // METEOBLUE API
 // MeteoBlue API key, https://www.meteoblue.com/en/weather-api/index/overview
-const String MB_API_URL = "api_url_with_key_goes_here";
+const String MB_API_URL = "api_url";
 
 // LOCATION
 // Set your latitude and longitude.
@@ -126,6 +126,13 @@ const unsigned long NTP_TIMEOUT = 20000; // ms
 // Note: The OpenWeatherMap model is updated every 10 minutes, so updating more
 //       frequently than that is unnessesary.
 const int SLEEP_DURATION = 30; // minutes
+// Meteoblue API call interval in minutes. (how often to fetch fresh data)
+// ESP32 will wake every SLEEP_DURATION to update sensors and display, but will
+// only call the Meteoblue API every MB_API_CALL_SLEEP_DURATION to reduce costs.
+// Cached API data is used between calls. (range: [SLEEP_DURATION-1440])
+// Example: SLEEP_DURATION=30, MB_API_CALL_SLEEP_DURATION=1440 means display
+//          updates every 30min but API is called only every 24 hours.
+const int MB_API_CALL_SLEEP_DURATION = 1440; // minutes
 // Bed Time Power Savings.
 // If BED_TIME == WAKE_TIME, then this battery saving feature will be disabled.
 // (range: [0-23])

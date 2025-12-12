@@ -433,25 +433,38 @@ bool waitForSNTPSync(tm *timeInfo)
         
         Serial.println("[debug] Extracted " + String(mb_raw.hourly_data.size()) + " hours");
         
+        // Debug: Check what time the API data starts from
+        if (time_array.size() > 0)
+        {
+          const char* first_time = time_array[0].as<const char *>();
+          const char* last_time = time_array[time_array.size() - 1].as<const char *>();
+          Serial.println("[debug] API data time range: " + String(first_time) + " to " + String(last_time));
+        }
+        
         // First convert MB data to OWM format (initializes current + hourly + basic daily)
         convertMBtoOWM(mb_raw, owm_onecall, owm_air);
         Serial.println("[debug] Basic conversion complete, now aggregating extended daily forecast...");
         
         // Now aggregate daily data directly from JSON arrays (up to 192 hours for 8 days)
         // This overwrites the daily[] array with more accurate aggregations from full data
+        // Note: Meteoblue API returns data starting at midnight, so day 0 = today
         int daily_hours = (total_hours > 192) ? 192 : total_hours;
         
-        for (int day = 0; day < 8 && (day * 24) < daily_hours; ++day)
+        for (int day = 0; day < 8; ++day)
         {
           int start_hour = day * 24;
           int end_hour = start_hour + 24;
+          
+          // Check if we have enough data for this day
+          if (start_hour >= daily_hours) break;
           if (end_hour > daily_hours) end_hour = daily_hours;
           
           float temp_min = 1000.0f;
           float temp_max = -1000.0f;
           float precip_sum = 0.0f;
           int pop_max = 0;
-          int pictocode_noon = 1;
+          int pictocode_day = 1;
+          int pictocode_count[35] = {0}; // Count occurrences of each pictocode during daytime
           
           for (int h = start_hour; h < end_hour; ++h)
           {
@@ -462,10 +475,42 @@ bool waitForSNTPSync(tm *timeInfo)
             int pop = precip_prob_array[h].as<int>();
             if (pop > pop_max) pop_max = pop;
             
-            // Get pictocode around noon
-            if (h == start_hour + 12) {
-              pictocode_noon = picto_array[h].as<int>();
+            // Count pictocodes during daytime hours (6am-6pm)
+            // Parse actual hour from time string "YYYY-MM-DD HH:MM"
+            const char* time_str = time_array[h].as<const char *>();
+            int hour_of_day = 12; // default to noon
+            if (time_str != nullptr)
+            {
+              int year, month, day, hour, minute;
+              if (sscanf(time_str, "%d-%d-%d %d:%d", &year, &month, &day, &hour, &minute) == 5)
+              {
+                hour_of_day = hour;
+              }
             }
+            
+            if (hour_of_day >= 6 && hour_of_day <= 18)
+            {
+              int code = picto_array[h].as<int>();
+              if (code >= 1 && code <= 34) {
+                pictocode_count[code]++;
+              }
+            }
+          }
+          
+          // Select most frequent daytime pictocode, or noon as fallback
+          int max_count = 0;
+          for (int i = 1; i <= 34; ++i)
+          {
+            if (pictocode_count[i] > max_count)
+            {
+              max_count = pictocode_count[i];
+              pictocode_day = i;
+            }
+          }
+          // If no daytime codes found, use noon
+          if (max_count == 0 && start_hour + 12 < daily_hours)
+          {
+            pictocode_day = picto_array[start_hour + 12].as<int>();
           }
           
           // Populate owm_onecall.daily[day] directly
@@ -492,7 +537,7 @@ bool waitForSNTPSync(tm *timeInfo)
           owm_onecall.daily[day].rain = precip_sum;
           owm_onecall.daily[day].uvi = uv_array[start_hour + 12 < daily_hours ? start_hour + 12 : start_hour].as<int>();
           
-          owm_onecall.daily[day].weather.id = pictocodeToOWMId(pictocode_noon);
+          owm_onecall.daily[day].weather.id = pictocodeToOWMId(pictocode_day);
           owm_onecall.daily[day].weather.main = "Unknown";
           owm_onecall.daily[day].weather.description = "MB daily";
           owm_onecall.daily[day].weather.icon = "01d";

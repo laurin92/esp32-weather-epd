@@ -47,7 +47,25 @@ const String MB_API_URL = "https://my.meteoblue.com/packages/basic-1h_clouds-1h?
 - `format=json` parameter
 - The package endpoint (e.g., `basic-1h_clouds-1h`)
 
-### Step 3: Build and Flash
+### Step 3: Configure API Call Frequency (Optional)
+
+To reduce API costs, you can control how often fresh data is fetched:
+
+In **src/config.cpp**:
+```cpp
+const int SLEEP_DURATION = 30; // Display updates every 30 minutes
+const int MB_API_CALL_SLEEP_DURATION = 120; // API called every 2 hours
+```
+
+With these settings:
+- ESP32 wakes every 30 minutes to update sensors and display
+- Fresh Meteoblue API data is fetched only every 2 hours
+- Between API calls, cached data from NVS is used
+- Reduces API calls by 75% while maintaining frequent display updates
+
+**Note**: `MB_API_CALL_SLEEP_DURATION` must be ≥ `SLEEP_DURATION`. Set both to the same value if you want fresh data every wake.
+
+### Step 4: Build and Flash
 ```bash
 pio run -t upload
 ```
@@ -55,11 +73,14 @@ pio run -t upload
 ## How It Works
 
 ### Data Flow:
-1. **API Call** - `getMBweather()` fetches JSON from Meteoblue API
-2. **Parsing** - In DEBUG mode (DEBUG_LEVEL>=2), JSON arrays are accessed directly; otherwise `deserializeMeteoblue()` parses into `mb_raw_response_t`
-3. **Conversion** - `convertMBtoOWM()` transforms MB data to OWM-compatible structures (current + hourly)
-4. **Daily Aggregation** - For 8-day forecast, up to 192 hours are processed directly from JSON arrays, aggregating temperature min/max, precipitation, and weather codes per 24-hour period
-5. **Rendering** - Existing display code renders using OWM-compatible data
+1. **Wake & Check Cache** - ESP32 wakes, checks time since last API call
+2. **API Call (if needed)** - `getMBweather()` fetches JSON if cache expired or first run
+3. **Parsing** - In DEBUG mode (DEBUG_LEVEL>=2), JSON arrays are accessed directly; otherwise `deserializeMeteoblue()` parses into `mb_raw_response_t`
+4. **Conversion** - `convertMBtoOWM()` transforms MB data to OWM-compatible structures (current + hourly)
+5. **Daily Aggregation** - Up to 192 hours processed directly from JSON arrays, aggregating per calendar day (midnight to midnight)
+6. **Caching** - Weather data cached in NVS for use between API calls
+7. **Rendering** - Existing display code renders using OWM-compatible data
+8. **Deep Sleep** - ESP32 sleeps until next `SLEEP_DURATION` interval
 
 ### Key Components:
 
@@ -89,7 +110,8 @@ pio run -t upload
 - Only 48 hours stored in memory for hourly display, daily aggregation processed on-the-fly
 - Min/max temperatures calculated across each 24-hour period
 - Total precipitation summed for the day
-- Midday pictocode (hour 12) used for daily weather icon
+- **Weather icon selection**: Most frequent pictocode during daytime hours (6am-6pm) is used to represent the entire day, providing a more accurate representation than a single snapshot
+- Days align with calendar days (midnight to midnight) since Meteoblue API returns data starting at 00:00
 
 ### Air Quality
 - Not available in Meteoblue basic API
@@ -106,12 +128,18 @@ pio run -t upload
 
 ## Meteoblue Pictocode Mapping
 
-The integration maps Meteoblue pictocodes (1-34) to OpenWeatherMap weather IDs:
-- 1-9: Clear to cloudy conditions
-- 10-15: Rain and snow
+The integration maps Meteoblue pictocodes (1-34) to OpenWeatherMap weather IDs with a conservative approach to rain:
+- 1-8: Clear to overcast conditions (no precipitation)
+- 9: Overcast with possible rain (mapped to overcast, not rain)
+- 10-15: Actual rain and snow
 - 16-20: Sleet and showers
-- 21-28: Overcast with precipitation
+- 21: Light rain with clouds (mapped to mostly cloudy)
+- 22-24: Rain/snow/sleet with clouds
+- 25: Light rain shower with clouds (mapped to mostly cloudy)
+- 26-28: Rain/snow/sleet showers with clouds
 - 29-34: Heavy precipitation and thunderstorms
+
+**Strategy**: Only pictocodes indicating actual precipitation (10+) show rain/snow icons. Codes with "slight" or "possible" rain show cloud icons to avoid over-predicting precipitation.
 
 See `pictocodeToOWMId()` in mb_response.cpp for complete mapping.
 
@@ -128,6 +156,10 @@ See `pictocodeToOWMId()` in mb_response.cpp for complete mapping.
 5. **API URL Format**: The complete API URL including credentials must be stored in MB_API_URL. This differs from OWM which separates endpoint and API key.
 
 6. **Memory Optimization**: To avoid ESP32 heap overflow, only 48 hours of data are stored in memory. Daily forecast aggregation (up to 8 days) is performed directly on JSON arrays during parsing without intermediate storage. This prevents the ~169 hours from Meteoblue API from exhausting available RAM.
+
+7. **Data Caching**: Weather data is cached in NVS (non-volatile storage) between API calls to reduce costs. The cache survives deep sleep and allows the display to update more frequently than API calls are made. Cache is automatically managed with old data removed before new data is stored.
+
+8. **Time Alignment**: Meteoblue API returns hourly data starting at midnight (00:00), so daily aggregations align perfectly with calendar days. Each day represents a full 24-hour period from midnight to midnight.
 
 ## Testing Recommendations
 
@@ -151,6 +183,18 @@ See `pictocodeToOWMId()` in mb_response.cpp for complete mapping.
 ### Missing Data
 - Increase `HTTP_CLIENT_TCP_TIMEOUT` in config.cpp if seeing timeout errors
 - Some fields (air quality, alerts) are expected to be empty with MB basic API
+
+### NVS Storage Errors
+- If you see "NOT_ENOUGH_SPACE" errors, the NVS partition may be full
+- The code automatically clears old cached data before writing new data
+- If persistent, consider increasing `SLEEP_DURATION` to reduce write frequency
+- Check serial output for actual bytes written/read from cache
+
+### Weather Icons Don't Match Meteoblue Website
+- Ensure you're comparing the same day (cache may show older data)
+- Check serial monitor for API call timestamps
+- Daily icons represent the most common daytime condition (6am-6pm), not a single hour
+- Force fresh API call by setting `MB_API_CALL_SLEEP_DURATION` = `SLEEP_DURATION`
 
 ## Future Enhancements
 

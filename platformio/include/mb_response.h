@@ -56,6 +56,8 @@ typedef struct mb_raw_response
   float longitude;
   String timezone_abbr;
   int utc_timeoffset;       // UTC offset in hours
+  int64_t sunrise;          // Sunrise timestamp for today
+  int64_t sunset;           // Sunset timestamp for today
   std::vector<mb_raw_hourly_t> hourly_data;
 } mb_raw_response_t;
 

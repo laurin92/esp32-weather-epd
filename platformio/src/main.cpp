@@ -293,21 +293,105 @@ void setup()
 #endif
 
 #ifdef USE_MB_API
-  // Using Meteoblue API
-  int rxStatus = getMBweather(client, owm_onecall, owm_air_pollution);
-  if (rxStatus != HTTP_CODE_OK)
+  // Using Meteoblue API with configurable call frequency
+  // Check if we need to make a fresh API call or can use cached data
+  prefs.begin(NVS_NAMESPACE, false);
+  unsigned long lastApiCall = prefs.getULong("lastMBCall", 0);
+  unsigned long currentTime = timeInfo.tm_hour * 60 + timeInfo.tm_min;
+  unsigned long timeSinceLastCall = 0;
+  
+  if (lastApiCall > 0)
   {
-    killWiFi();
-    statusStr = "Meteoblue API";
-    tmpStr = String(rxStatus, DEC) + ": " + getHttpResponsePhrase(rxStatus);
-    initDisplay();
-    do
+    // Calculate minutes elapsed, handling day wrap-around
+    if (currentTime >= lastApiCall)
     {
-      drawError(wi_cloud_down_196x196, statusStr, tmpStr);
-    } while (display.nextPage());
-    powerOffDisplay();
-    beginDeepSleep(startTime, &timeInfo);
+      timeSinceLastCall = currentTime - lastApiCall;
+    }
+    else
+    {
+      timeSinceLastCall = (24 * 60 - lastApiCall) + currentTime;
+    }
   }
+  
+  bool needsApiCall = (lastApiCall == 0) || (timeSinceLastCall >= MB_API_CALL_SLEEP_DURATION);
+  
+  if (needsApiCall)
+  {
+    Serial.println("Making fresh Meteoblue API call...");
+    int rxStatus = getMBweather(client, owm_onecall, owm_air_pollution);
+    if (rxStatus != HTTP_CODE_OK)
+    {
+      killWiFi();
+      prefs.end();
+      statusStr = "Meteoblue API";
+      tmpStr = String(rxStatus, DEC) + ": " + getHttpResponsePhrase(rxStatus);
+      initDisplay();
+      do
+      {
+        drawError(wi_cloud_down_196x196, statusStr, tmpStr);
+      } while (display.nextPage());
+      powerOffDisplay();
+      beginDeepSleep(startTime, &timeInfo);
+    }
+    
+    // API call successful, store timestamp and cache the data
+    prefs.putULong("lastMBCall", currentTime);
+    
+    // Clear old data first to free space, then cache new data
+    prefs.remove("owm_onecall");
+    prefs.remove("owm_air");
+    
+    size_t onecall_written = prefs.putBytes("owm_onecall", &owm_onecall, sizeof(owm_onecall));
+    size_t air_written = prefs.putBytes("owm_air", &owm_air_pollution, sizeof(owm_air_pollution));
+    
+    Serial.println("API data cached to NVS (onecall: " + String(onecall_written) + 
+                   " bytes, air: " + String(air_written) + " bytes)");
+  }
+  else
+  {
+    Serial.println("Using cached Meteoblue data (" + String(timeSinceLastCall) + 
+                   "min since last call, next in " + 
+                   String(MB_API_CALL_SLEEP_DURATION - timeSinceLastCall) + "min)");
+    
+    // Load cached data from NVS
+    size_t onecallSize = prefs.getBytesLength("owm_onecall");
+    size_t airSize = prefs.getBytesLength("owm_air");
+    
+    Serial.println("Cached data sizes: onecall=" + String(onecallSize) + 
+                   " bytes, air=" + String(airSize) + " bytes");
+    
+    if (onecallSize == sizeof(owm_onecall) && airSize == sizeof(owm_air_pollution))
+    {
+      prefs.getBytes("owm_onecall", &owm_onecall, sizeof(owm_onecall));
+      prefs.getBytes("owm_air", &owm_air_pollution, sizeof(owm_air_pollution));
+      Serial.println("Loaded cached weather data from NVS");
+    }
+    else
+    {
+      Serial.println("No valid cached data (size mismatch), forcing API call...");
+      int rxStatus = getMBweather(client, owm_onecall, owm_air_pollution);
+      if (rxStatus != HTTP_CODE_OK)
+      {
+        killWiFi();
+        prefs.end();
+        statusStr = "Meteoblue API";
+        tmpStr = String(rxStatus, DEC) + ": " + getHttpResponsePhrase(rxStatus);
+        initDisplay();
+        do
+        {
+          drawError(wi_cloud_down_196x196, statusStr, tmpStr);
+        } while (display.nextPage());
+        powerOffDisplay();
+        beginDeepSleep(startTime, &timeInfo);
+      }
+      prefs.putULong("lastMBCall", currentTime);
+      prefs.remove("owm_onecall");
+      prefs.remove("owm_air");
+      prefs.putBytes("owm_onecall", &owm_onecall, sizeof(owm_onecall));
+      prefs.putBytes("owm_air", &owm_air_pollution, sizeof(owm_air_pollution));
+    }
+  }
+  prefs.end();
 #endif
 
   killWiFi(); // WiFi no longer needed

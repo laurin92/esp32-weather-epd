@@ -55,49 +55,50 @@ int64_t parseTimeString(const char *time_str)
 }
 
 /* Map Meteoblue pictocode to OpenWeatherMap weather ID
- * This is an approximation based on typical weather conditions
+ * Meteoblue pictocodes: https://content.meteoblue.com/en/help/standards/symbols-and-pictograms
+ * OpenWeatherMap IDs: https://openweathermap.org/weather-conditions
+ * 
  */
 int pictocodeToOWMId(int pictocode)
 {
-  // Meteoblue pictocodes mapping to OWM IDs
-  // Reference: https://content.meteoblue.com/en/help/standards/symbols-and-pictograms
   switch (pictocode)
   {
-    case 1:  return 800;  // Clear, cloudless sky
-    case 2:  return 801;  // Clear, few cirrus
-    case 3:  return 801;  // Clear with cirrus
-    case 4:  return 802;  // Clear with few low clouds
-    case 5:  return 802;  // Clear with few low clouds and cirrus
-    case 6:  return 803;  // Partly cloudy
-    case 7:  return 804;  // Cloudy
+    case 1:  return 800;  // Clear sky, cloudless
+    case 2:  return 800;  // Clear sky, few high clouds
+    case 3:  return 801;  // Few clouds, cirrus
+    case 4:  return 801;  // Few clouds, low clouds
+    case 5:  return 802;  // Partly cloudy
+    case 6:  return 802;  // Partly cloudy, some cirrus
+    case 7:  return 803;  // Mostly cloudy
     case 8:  return 804;  // Overcast
-    case 9:  return 804;  // Overcast with rain
-    case 10: return 500;  // Light rain
-    case 11: return 501;  // Rain
-    case 12: return 502;  // Heavy rain
-    case 13: return 600;  // Light snow
-    case 14: return 601;  // Snow
-    case 15: return 602;  // Heavy snow
-    case 16: return 611;  // Sleet
-    case 17: return 300;  // Light rain shower
-    case 18: return 520;  // Rain shower
-    case 19: return 615;  // Snow shower
-    case 20: return 616;  // Sleet shower
-    case 21: return 500;  // Overcast with light rain
-    case 22: return 501;  // Overcast with rain
-    case 23: return 600;  // Overcast with snow
-    case 24: return 611;  // Overcast with sleet
-    case 25: return 300;  // Overcast with light rain shower
-    case 26: return 520;  // Overcast with rain shower
-    case 27: return 615;  // Overcast with snow shower
-    case 28: return 616;  // Overcast with sleet shower
-    case 29: return 502;  // Heavy rain
-    case 30: return 602;  // Heavy snow
-    case 31: return 611;  // Heavy sleet
-    case 32: return 521;  // Rain shower and thunderstorm
-    case 33: return 621;  // Snow shower and thunderstorm
-    case 34: return 611;  // Sleet shower and thunderstorm
-    default: return 800;  // Default to clear
+    case 9:  return 804;  // Overcast, slight rain possible (show as overcast, not rain)
+    case 10: return 804;  // Mixed with some thunderstorm clouds possible 
+    case 11: return 804;  // Mixed with few cirrus with some thunderstorm clouds possible 
+    case 12: return 804;  // Mixed with cirrus and some thunderstorm clouds possible
+    case 13: return 721;  // Clear but hazy
+    case 14: return 721;  // Clear but hazy with few cirrus 
+    case 15: return 721;  // Clear but hazy with cirrus
+    case 16: return 741;  // Fog/low stratus clouds
+    case 17: return 741;  // Fog/low stratus clouds with few cirrus
+    case 18: return 741;  // Fog/low stratus clouds with cirrus
+    case 19: return 803;  // Mostly cloudy
+    case 20: return 803;  // Mostly cloudy and few cirrus
+    case 21: return 803;  // Mostly cloudy and cirrus
+    case 22: return 804;  // Overcast
+    case 23: return 521;  // Overcast with rain
+    case 24: return 601;  // Overcast with snow
+    case 25: return 502;  // Overcast with heavy rain
+    case 26: return 602;  // Overcast with heavy snow
+    case 27: return 620;  // Rain, thunderstorms likely 
+    case 28: return 200;  // Light rain, thunderstorms likely
+    case 29: return 622;  // Storm with heavy snow
+    case 30: return 202;  // Heavy rain, thunderstorms likely
+    case 31: return 521;  // Mixed with showers
+    case 32: return 621;  // Mixed with snow showers
+    case 33: return 500;  // Overcast with light rain 
+    case 34: return 600;  // Overcast with light snow
+    case 35: return 616;  // Overcast with mixture of snow and rain 
+    default: return 800;  // Default to clear sky
   }
 }
 
@@ -146,6 +147,40 @@ DeserializationError deserializeMeteoblue(WiFiClient &json,
   JsonArray pressure_array = data_1h["sealevelpressure"];
   JsonArray daylight_array = data_1h["isdaylight"];
   JsonArray rainspot_array = data_1h["rainspot"];
+
+  // Parse daily data for sunrise/sunset (more accurate than hourly transitions)
+  raw.sunrise = 0;
+  raw.sunset = 0;
+  JsonObject data_daily = doc["data_daily"];
+  if (!data_daily.isNull())
+  {
+    JsonArray daily_time = data_daily["time"];
+    JsonArray daily_sunrise = data_daily["sunrise"];
+    JsonArray daily_sunset = data_daily["sunset"];
+    
+    Serial.println("[debug] data_daily found, time size: " + String(daily_time.size()) + 
+                   ", sunrise size: " + String(daily_sunrise.size()) + 
+                   ", sunset size: " + String(daily_sunset.size()));
+    
+    // Get first day's sunrise/sunset (today)
+    if (daily_time.size() > 0 && daily_sunrise.size() > 0 && daily_sunset.size() > 0)
+    {
+      const char *sunrise_str = daily_sunrise[0].as<const char *>();
+      const char *sunset_str = daily_sunset[0].as<const char *>();
+      
+      Serial.println("[debug] Raw sunrise str: " + String(sunrise_str));
+      Serial.println("[debug] Raw sunset str: " + String(sunset_str));
+      
+      raw.sunrise = parseTimeString(sunrise_str);
+      raw.sunset = parseTimeString(sunset_str);
+      Serial.println("[debug] Parsed sunrise: " + String(raw.sunrise) + 
+                     ", sunset: " + String(raw.sunset));
+    }
+  }
+  else
+  {
+    Serial.println("[debug] data_daily NOT found in response");
+  }
 
   // Iterate through time entries - limit to what we need to avoid memory issues
   // We need 48 hours for hourly display. Daily data will be aggregated from these.
@@ -222,26 +257,40 @@ void convertMBtoOWM(const mb_raw_response_t &mb_raw,
   owm_resp.current.weather.description = "Weather data from Meteoblue";
   owm_resp.current.weather.icon = first_hour.isdaylight ? "01d" : "01n";
 
-  // Find sunrise/sunset from daylight transitions
-  // Simple heuristic: find first daylight=1 for sunrise, last daylight=1 for sunset
-  owm_resp.current.sunrise = current_time; // Default
-  owm_resp.current.sunset = current_time + 12 * 3600; // Default
-  
-  for (size_t i = 0; i < mb_raw.hourly_data.size(); ++i)
+  // Use precise sunrise/sunset from daily data if available, otherwise estimate
+  if (mb_raw.sunrise > 0)
   {
-    if (mb_raw.hourly_data[i].isdaylight == 1)
+    owm_resp.current.sunrise = mb_raw.sunrise;
+  }
+  else
+  {
+    // Fallback: estimate from hourly daylight transitions
+    owm_resp.current.sunrise = current_time;
+    for (size_t i = 0; i < mb_raw.hourly_data.size(); ++i)
     {
-      owm_resp.current.sunrise = parseTimeString(mb_raw.hourly_data[i].time);
-      break;
+      if (mb_raw.hourly_data[i].isdaylight == 1)
+      {
+        owm_resp.current.sunrise = parseTimeString(mb_raw.hourly_data[i].time);
+        break;
+      }
     }
   }
-  
-  for (int i = mb_raw.hourly_data.size() - 1; i >= 0; --i)
+
+  if (mb_raw.sunset > 0)
   {
-    if (mb_raw.hourly_data[i].isdaylight == 1)
+    owm_resp.current.sunset = mb_raw.sunset;
+  }
+  else
+  {
+    // Fallback: estimate from hourly daylight transitions
+    owm_resp.current.sunset = current_time + 12 * 3600;
+    for (int i = mb_raw.hourly_data.size() - 1; i >= 0; --i)
     {
-      owm_resp.current.sunset = parseTimeString(mb_raw.hourly_data[i].time) + 3600;
-      break;
+      if (mb_raw.hourly_data[i].isdaylight == 1)
+      {
+        owm_resp.current.sunset = parseTimeString(mb_raw.hourly_data[i].time) + 3600;
+        break;
+      }
     }
   }
 
