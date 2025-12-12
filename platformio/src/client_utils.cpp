@@ -39,6 +39,7 @@
 #include "config.h"
 #include "display_utils.h"
 #include "renderer.h"
+#include "mb_response.h"
 #ifndef USE_HTTP
   #include <WiFiClientSecure.h>
 #endif
@@ -275,6 +276,267 @@ bool waitForSNTPSync(tm *timeInfo)
 
   return httpResponse;
 } // getOWMairpollution
+
+/* Perform an HTTP GET request to Meteoblue API
+ * Fetches weather data and converts it to OWM-compatible structures.
+ * The MB_API_URL contains the complete URL including the API key.
+ *
+ * Returns the HTTP Status Code.
+ */
+#ifdef USE_HTTP
+  int getMBweather(WiFiClient &client, owm_resp_onecall_t &owm_onecall,
+                   owm_resp_air_pollution_t &owm_air)
+#else
+  int getMBweather(WiFiClientSecure &client, owm_resp_onecall_t &owm_onecall,
+                   owm_resp_air_pollution_t &owm_air)
+#endif
+{
+  int attempts = 0;
+  bool rxSuccess = false;
+  DeserializationError jsonErr = {};
+  mb_raw_response_t mb_raw = {};
+
+  // MB_API_URL should contain the full URL including the API key
+  // Example: "https://my.meteoblue.com/packages/basic-1h_clouds-1h?apikey=YOURAPIKEY&lat=48.5&lon=9.0&format=json"
+  
+  // Parse the MB_API_URL to extract host and path
+  String url = MB_API_URL;
+  String host = "";
+  String path = "";
+  int port = 443; // Default HTTPS port
+  
+  // Simple URL parsing
+  if (url.startsWith("https://"))
+  {
+    url = url.substring(8); // Remove "https://"
+    port = 443;
+  }
+  else if (url.startsWith("http://"))
+  {
+    url = url.substring(7); // Remove "http://"
+    port = 80;
+  }
+  
+  int slashIndex = url.indexOf('/');
+  if (slashIndex > 0)
+  {
+    host = url.substring(0, slashIndex);
+    path = url.substring(slashIndex);
+  }
+  else
+  {
+    host = url;
+    path = "/";
+  }
+
+  Serial.print(TXT_ATTEMPTING_HTTP_REQ);
+  Serial.println(": " + host + path);
+  
+  int httpResponse = 0;
+  while (!rxSuccess && attempts < 3)
+  {
+    wl_status_t connection_status = WiFi.status();
+    if (connection_status != WL_CONNECTED)
+    {
+      // -512 offset distinguishes these errors from httpClient errors
+      return -512 - static_cast<int>(connection_status);
+    }
+
+    HTTPClient http;
+    http.setConnectTimeout(HTTP_CLIENT_TCP_TIMEOUT);
+    http.setTimeout(HTTP_CLIENT_TCP_TIMEOUT);
+    http.begin(client, host, port, path);
+    httpResponse = http.GET();
+    
+#if DEBUG_LEVEL >= 2
+    Serial.print("[debug] MB HTTP Response Code: ");
+    Serial.println(httpResponse);
+#endif
+    
+    if (httpResponse == HTTP_CODE_OK)
+    {
+#if DEBUG_LEVEL >= 2
+      // Print raw response for debugging
+      String payload = http.getString();
+      Serial.println("[debug] MB API Response Length: " + String(payload.length()));
+      Serial.println("[debug] MB API Response:");
+      Serial.println(payload);
+      
+      // Deserialize from the string we just got
+      JsonDocument doc;
+      jsonErr = deserializeJson(doc, payload);
+      
+      if (jsonErr)
+      {
+        Serial.print("[debug] JSON Parse Error: ");
+        Serial.println(jsonErr.c_str());
+        httpResponse = -256 - static_cast<int>(jsonErr.code());
+      }
+      else
+      {
+        Serial.println("[debug] JSON parsed successfully, now extracting to MB structure...");
+        
+        // Parse metadata
+        JsonObject metadata = doc["metadata"];
+        mb_raw.latitude = metadata["latitude"].as<float>();
+        mb_raw.longitude = metadata["longitude"].as<float>();
+        mb_raw.timezone_abbr = metadata["timezone_abbrevation"].as<const char *>();
+        mb_raw.utc_timeoffset = metadata["utc_timeoffset"].as<int>();
+
+        // Parse hourly data arrays
+        JsonObject data_1h = doc["data_1h"];
+        JsonArray time_array = data_1h["time"];
+        JsonArray temp_array = data_1h["temperature"];
+        JsonArray felt_array = data_1h["felttemperature"];
+        JsonArray humidity_array = data_1h["relativehumidity"];
+        JsonArray windspeed_array = data_1h["windspeed"];
+        JsonArray winddir_array = data_1h["winddirection"];
+        JsonArray precip_array = data_1h["precipitation"];
+        JsonArray precip_prob_array = data_1h["precipitation_probability"];
+        JsonArray snow_array = data_1h["snowfraction"];
+        JsonArray picto_array = data_1h["pictocode"];
+        JsonArray conv_precip_array = data_1h["convective_precipitation"];
+        JsonArray uv_array = data_1h["uvindex"];
+        JsonArray pressure_array = data_1h["sealevelpressure"];
+        JsonArray daylight_array = data_1h["isdaylight"];
+        JsonArray rainspot_array = data_1h["rainspot"];
+
+        // Store first 48 hours for hourly display
+        int total_hours = time_array.size();
+        int num_hours = (total_hours > 48) ? 48 : total_hours;
+        
+        Serial.println("[debug] Total hours in API: " + String(total_hours) + 
+                       ", storing " + String(num_hours) + " for hourly display");
+        
+        for (int i = 0; i < num_hours; ++i)
+        {
+          mb_raw_hourly_t hour_data = {};
+          
+          hour_data.time = time_array[i].as<const char *>();
+          hour_data.temperature = temp_array[i].as<float>();
+          hour_data.felttemperature = felt_array[i].as<float>();
+          hour_data.relativehumidity = humidity_array[i].as<int>();
+          hour_data.windspeed = windspeed_array[i].as<float>();
+          hour_data.winddirection = winddir_array[i].as<int>();
+          hour_data.precipitation = precip_array[i].as<float>();
+          hour_data.precipitation_probability = precip_prob_array[i].as<int>();
+          hour_data.snowfraction = snow_array[i].as<float>();
+          hour_data.pictocode = picto_array[i].as<int>();
+          hour_data.convective_precipitation = conv_precip_array[i].as<float>();
+          hour_data.uvindex = uv_array[i].as<int>();
+          hour_data.sealevelpressure = pressure_array[i].as<float>();
+          hour_data.isdaylight = daylight_array[i].as<int>();
+          hour_data.rainspot = rainspot_array[i].as<const char *>();
+
+          mb_raw.hourly_data.push_back(hour_data);
+        }
+        
+        Serial.println("[debug] Extracted " + String(mb_raw.hourly_data.size()) + " hours");
+        
+        // First convert MB data to OWM format (initializes current + hourly + basic daily)
+        convertMBtoOWM(mb_raw, owm_onecall, owm_air);
+        Serial.println("[debug] Basic conversion complete, now aggregating extended daily forecast...");
+        
+        // Now aggregate daily data directly from JSON arrays (up to 192 hours for 8 days)
+        // This overwrites the daily[] array with more accurate aggregations from full data
+        int daily_hours = (total_hours > 192) ? 192 : total_hours;
+        
+        for (int day = 0; day < 8 && (day * 24) < daily_hours; ++day)
+        {
+          int start_hour = day * 24;
+          int end_hour = start_hour + 24;
+          if (end_hour > daily_hours) end_hour = daily_hours;
+          
+          float temp_min = 1000.0f;
+          float temp_max = -1000.0f;
+          float precip_sum = 0.0f;
+          int pop_max = 0;
+          int pictocode_noon = 1;
+          
+          for (int h = start_hour; h < end_hour; ++h)
+          {
+            float temp = temp_array[h].as<float>();
+            if (temp < temp_min) temp_min = temp;
+            if (temp > temp_max) temp_max = temp;
+            precip_sum += precip_array[h].as<float>();
+            int pop = precip_prob_array[h].as<int>();
+            if (pop > pop_max) pop_max = pop;
+            
+            // Get pictocode around noon
+            if (h == start_hour + 12) {
+              pictocode_noon = picto_array[h].as<int>();
+            }
+          }
+          
+          // Populate owm_onecall.daily[day] directly
+          int64_t day_timestamp = parseTimeString(time_array[start_hour].as<const char *>());
+          
+          owm_onecall.daily[day].dt = day_timestamp;
+          owm_onecall.daily[day].temp.min = temp_min + 273.15f;
+          owm_onecall.daily[day].temp.max = temp_max + 273.15f;
+          owm_onecall.daily[day].temp.day = (temp_min + temp_max) / 2.0f + 273.15f;
+          owm_onecall.daily[day].temp.night = temp_min + 273.15f;
+          owm_onecall.daily[day].temp.eve = temp_max + 273.15f;
+          owm_onecall.daily[day].temp.morn = temp_min + 273.15f;
+          
+          owm_onecall.daily[day].feels_like.day = owm_onecall.daily[day].temp.day;
+          owm_onecall.daily[day].feels_like.night = owm_onecall.daily[day].temp.night;
+          owm_onecall.daily[day].feels_like.eve = owm_onecall.daily[day].temp.eve;
+          owm_onecall.daily[day].feels_like.morn = owm_onecall.daily[day].temp.morn;
+          
+          owm_onecall.daily[day].pressure = static_cast<int>(pressure_array[start_hour].as<float>());
+          owm_onecall.daily[day].humidity = humidity_array[start_hour].as<int>();
+          owm_onecall.daily[day].wind_speed = windspeed_array[start_hour].as<float>();
+          owm_onecall.daily[day].wind_deg = winddir_array[start_hour].as<int>();
+          owm_onecall.daily[day].pop = pop_max / 100.0f;
+          owm_onecall.daily[day].rain = precip_sum;
+          owm_onecall.daily[day].uvi = uv_array[start_hour + 12 < daily_hours ? start_hour + 12 : start_hour].as<int>();
+          
+          owm_onecall.daily[day].weather.id = pictocodeToOWMId(pictocode_noon);
+          owm_onecall.daily[day].weather.main = "Unknown";
+          owm_onecall.daily[day].weather.description = "MB daily";
+          owm_onecall.daily[day].weather.icon = "01d";
+          
+          owm_onecall.daily[day].sunrise = owm_onecall.current.sunrise + (day * 86400);
+          owm_onecall.daily[day].sunset = owm_onecall.current.sunset + (day * 86400);
+          owm_onecall.daily[day].dew_point = 0.0f;
+          owm_onecall.daily[day].clouds = 0;
+          owm_onecall.daily[day].visibility = 10000;
+          owm_onecall.daily[day].wind_gust = 0.0f;
+          owm_onecall.daily[day].snow = 0.0f;
+          owm_onecall.daily[day].moonrise = 0;
+          owm_onecall.daily[day].moonset = 0;
+          owm_onecall.daily[day].moon_phase = 0.0f;
+        }
+        
+        Serial.println("[debug] Aggregated " + String(8) + " days of forecast");
+        
+        Serial.println("[debug] MB to OWM conversion complete!");
+        rxSuccess = true;
+      }
+#else
+      jsonErr = deserializeMeteoblue(http.getStream(), mb_raw);
+      if (jsonErr)
+      {
+        httpResponse = -256 - static_cast<int>(jsonErr.code());
+      }
+      else
+      {
+        convertMBtoOWM(mb_raw, owm_onecall, owm_air);
+        rxSuccess = true;
+      }
+#endif
+    }
+    
+    client.stop();
+    http.end();
+    Serial.println("  " + String(httpResponse, DEC) + " "
+                   + getHttpResponsePhrase(httpResponse));
+    ++attempts;
+  }
+
+  return httpResponse;
+} // getMBweather
 
 /* Prints debug information about heap usage.
  */

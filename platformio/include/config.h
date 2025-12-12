@@ -73,7 +73,7 @@
 //   Dutch (Belgium)                 nl_BE
 //   Portuguese (Brazil)             pt_BR
 //   Spanish (Spain)                 es_ES
-#define LOCALE en_US
+#define LOCALE de_DE
 
 // UNITS
 // Define exactly one macro for each measurement type below.
@@ -82,16 +82,16 @@
 //   Metric   : Celsius
 //   Imperial : Fahrenheit
 // #define UNITS_TEMP_KELVIN
-// #define UNITS_TEMP_CELSIUS
-#define UNITS_TEMP_FAHRENHEIT
+#define UNITS_TEMP_CELSIUS
+// #define UNITS_TEMP_FAHRENHEIT
 
 // UNITS - WIND SPEED
 //   Metric   : Kilometers per Hour
 //   Imperial : Miles per Hour
 // #define UNITS_SPEED_METERSPERSECOND
 // #define UNITS_SPEED_FEETPERSECOND
-// #define UNITS_SPEED_KILOMETERSPERHOUR
-#define UNITS_SPEED_MILESPERHOUR
+#define UNITS_SPEED_KILOMETERSPERHOUR
+// #define UNITS_SPEED_MILESPERHOUR
 // #define UNITS_SPEED_KNOTS
 // #define UNITS_SPEED_BEAUFORT
 
@@ -101,8 +101,8 @@
 // #define UNITS_PRES_HECTOPASCALS
 // #define UNITS_PRES_PASCALS
 // #define UNITS_PRES_MILLIMETERSOFMERCURY
-#define UNITS_PRES_INCHESOFMERCURY
-// #define UNITS_PRES_MILLIBARS
+// #define UNITS_PRES_INCHESOFMERCURY
+#define UNITS_PRES_MILLIBARS
 // #define UNITS_PRES_ATMOSPHERES
 // #define UNITS_PRES_GRAMSPERSQUARECENTIMETER
 // #define UNITS_PRES_POUNDSPERSQUAREINCH
@@ -110,8 +110,8 @@
 // UNITS - VISIBILITY DISTANCE
 //   Metric   : Kilometers
 //   Imperial : Miles
-// #define UNITS_DIST_KILOMETERS
-#define UNITS_DIST_MILES
+#define UNITS_DIST_KILOMETERS
+// #define UNITS_DIST_MILES
 
 // UNITS - PRECIPITATION (HOURLY)
 // Measure of precipitation.
@@ -129,9 +129,9 @@
 //   Metric   : Millimeters
 //   Imperial : Inches
 // #define UNITS_DAILY_PRECIP_POP
-// #define UNITS_DAILY_PRECIP_MILLIMETERS
+#define UNITS_DAILY_PRECIP_MILLIMETERS
 // #define UNITS_DAILY_PRECIP_CENTIMETERS
-#define UNITS_DAILY_PRECIP_INCHES
+// #define UNITS_DAILY_PRECIP_INCHES
 
 // Hypertext Transfer Protocol (HTTP)
 // HTTP
@@ -153,8 +153,16 @@
 //   2026-04-10 23:59:59+00:00
 // (uncomment exactly one)
 // #define USE_HTTP
-// #define USE_HTTPS_NO_CERT_VERIF
-#define USE_HTTPS_WITH_CERT_VERIF // REQUIRES MANUAL UPDATE WHEN CERT EXPIRES
+#define USE_HTTPS_NO_CERT_VERIF
+// #define USE_HTTPS_WITH_CERT_VERIF // REQUIRES MANUAL UPDATE WHEN CERT EXPIRES
+
+// API SELECTION
+// Choose which weather API to use for fetching weather data.
+// USE_OWM_API: OpenWeatherMap API (requires OWM_APIKEY in config.cpp)
+// USE_MB_API:  Meteoblue API (requires MB_API_URL in config.cpp)
+// (uncomment exactly one)
+// #define USE_OWM_API
+#define USE_MB_API
 
 // WIND DIRECTION INDICATOR
 // Choose whether the wind direction indicator should be an arrow, number, or
@@ -271,7 +279,7 @@
 //   level 0: basic status information, assists troubleshooting (default)
 //   level 1: increased verbosity for debugging
 //   level 2: print api responses to serial monitor
-#define DEBUG_LEVEL 0
+#define DEBUG_LEVEL 2
 
 // Set the below constants in "config.cpp"
 extern const uint8_t PIN_BAT_ADC;
@@ -294,6 +302,7 @@ extern const unsigned HTTP_CLIENT_TCP_TIMEOUT;
 extern const String OWM_APIKEY;
 extern const String OWM_ENDPOINT;
 extern const String OWM_ONECALL_VERSION;
+extern const String MB_API_URL;
 extern const String LAT;
 extern const String LON;
 extern const String CITY_STRING;
@@ -379,6 +388,10 @@ extern const uint32_t MIN_BATTERY_VOLTAGE;
       ^ defined(USE_HTTPS_NO_CERT_VERIF)    \
       ^ defined(USE_HTTPS_WITH_CERT_VERIF))
   #error Invalid configuration. Exactly one HTTP mode must be selected.
+#endif
+#if !(  defined(USE_OWM_API)    \
+      ^ defined(USE_MB_API))
+  #error Invalid configuration. Exactly one API (USE_OWM_API or USE_MB_API) must be selected.
 #endif
 #if !(  defined(WIND_INDICATOR_ARROW)                         \
       || (                                                    \

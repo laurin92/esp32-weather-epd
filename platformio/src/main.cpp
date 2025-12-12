@@ -259,6 +259,9 @@ void setup()
   WiFiClientSecure client;
   client.setCACert(cert_Sectigo_RSA_Organization_Validation_Secure_Server_CA);
 #endif
+
+#ifdef USE_OWM_API
+  // Using OpenWeatherMap API
   int rxStatus = getOWMonecall(client, owm_onecall);
   if (rxStatus != HTTP_CODE_OK)
   {
@@ -287,6 +290,26 @@ void setup()
     powerOffDisplay();
     beginDeepSleep(startTime, &timeInfo);
   }
+#endif
+
+#ifdef USE_MB_API
+  // Using Meteoblue API
+  int rxStatus = getMBweather(client, owm_onecall, owm_air_pollution);
+  if (rxStatus != HTTP_CODE_OK)
+  {
+    killWiFi();
+    statusStr = "Meteoblue API";
+    tmpStr = String(rxStatus, DEC) + ": " + getHttpResponsePhrase(rxStatus);
+    initDisplay();
+    do
+    {
+      drawError(wi_cloud_down_196x196, statusStr, tmpStr);
+    } while (display.nextPage());
+    powerOffDisplay();
+    beginDeepSleep(startTime, &timeInfo);
+  }
+#endif
+
   killWiFi(); // WiFi no longer needed
 
   // GET INDOOR TEMPERATURE AND HUMIDITY, start BMEx80...
